@@ -1,0 +1,28 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境
+venv/
+.venv/
+env/
+venv.bak/
+.env
+
+# PyInstaller 打包产物
+build/
+dist/
+*.spec
+
+# 编辑器配置
+.vscode/
+.idea/
+
+# 操作系统文件
+Thumbs.db
+desktop.ini
+
+# 本地图标或临时文件
+*.log
+*.ico.bak
