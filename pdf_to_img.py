@@ -65,7 +65,7 @@ class PDFToImageConverter(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("PDF 转图片工具 (v1.5.1 稳定版)")
+        self.title("PDF 转图片工具 (v1.5.4 稳定版)")
         self.geometry("700x580")
 
         # 设置窗口图标
@@ -105,6 +105,12 @@ class PDFToImageConverter(ctk.CTk):
         self.drag_edge = None           # 正在拖拽哪个边缘
         self.drag_start_pos = (0, 0)    # 拖拽起始坐标
         self.initial_crops = (0, 0, 0, 0) # 拖拽起始裁剪值
+        self.canvas_offset = 5          # 画布边缘留白，防止线条被切断
+        
+        # 预览窗口预留空间常量 (必须与布局组件占用的空间一致)
+        # 包含：主容器边距、Canvas 边距、导航栏高度、画布 Offset
+        self.PREVIEW_PAD_X = 120 
+        self.PREVIEW_PAD_Y = 200
         
         # 绑定变量追踪，实现实时更新
         for var in [self.crop_left, self.crop_top, self.crop_right, self.crop_bottom]:
@@ -307,116 +313,178 @@ class PDFToImageConverter(ctk.CTk):
     def open_preview_window(self):
         img_w, img_h = self.full_preview_img.size
         
-        # 限制预览图大小，适应屏幕
-        screen_w = self.winfo_screenwidth() * 0.9
-        screen_h = self.winfo_screenheight() * 0.9
-        self.preview_scale = min(screen_w/img_w, screen_h/img_h, 1.0)
+        # 1. 决定目标可用空间
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
         
-        display_w = int(img_w * self.preview_scale)
-        display_h = int(img_h * self.preview_scale)
-        
-        # 准备缩放后的图片用于显示
-        if self.preview_scale < 1.0:
-            pil_img_resized = self.full_preview_img.resize((display_w, display_h), Image.Resampling.LANCZOS)
+        if self.preview_window_obj and self.preview_window_obj.winfo_exists():
+            current_win_w = self.preview_window_obj.winfo_width()
+            current_win_h = self.preview_window_obj.winfo_height()
+            if current_win_w > 100 and current_win_h > 100:
+                available_w = current_win_w - self.PREVIEW_PAD_X
+                available_h = current_win_h - self.PREVIEW_PAD_Y
+            else:
+                available_w = screen_w * 0.85 - self.PREVIEW_PAD_X
+                available_h = screen_h * 0.8 - self.PREVIEW_PAD_Y
         else:
-            pil_img_resized = self.full_preview_img
+            available_w = screen_w * 0.85 - self.PREVIEW_PAD_X
+            available_h = screen_h * 0.8 - self.PREVIEW_PAD_Y
+        
+        # 2. 计算缩放比例并更新图片
+        self.preview_scale = min(available_w / img_w, available_h / img_h)
+        display_w = int(round(img_w * self.preview_scale))
+        display_h = int(round(img_h * self.preview_scale))
+        
+        pil_img_resized = self.full_preview_img.resize((display_w, display_h), Image.Resampling.LANCZOS)
         self.tk_img = ImageTk.PhotoImage(pil_img_resized)
 
         if self.preview_window_obj and self.preview_window_obj.winfo_exists():
             self.preview_window_obj.lift()
-            # 更新已有的 Canvas 和图片
-            self.preview_canvas.config(width=display_w, height=display_h)
+            self.preview_canvas.config(width=display_w + self.canvas_offset * 2, height=display_h + self.canvas_offset * 2)
             self.preview_canvas.itemconfig(self.preview_image_id, image=self.tk_img)
+            self.preview_canvas.coords(self.preview_image_id, self.canvas_offset, self.canvas_offset)
             self.update_page_label()
             self.update_preview_rect()
             return
 
         self.preview_window_obj = ctk.CTkToplevel(self)
-        self.preview_window_obj.title("交互式裁剪预览 (拖拽边缘调整)")
+        self.preview_window_obj.title("裁剪区域预览 (拖拽边框或四个角进行调整)")
         self.preview_window_obj.attributes("-topmost", True)
         
-        # 先完成所有组件初始化，再绑定事件，防止初始化时的布局变化触发 resize
-        # 且使用 after 延迟绑定，彻底避开窗口创建初期的抖动
-        self.preview_window_obj.after(500, lambda: self.preview_window_obj.bind("<Configure>", self.on_preview_resize))
+        # 重置缩放状态变量，防止二次打开时受旧数据干扰
+        self._last_resize_size = None
+        self._last_resize_time = 0
+        
+        # 设置初始窗口几何尺寸并居中
+        win_w = display_w + self.PREVIEW_PAD_X
+        win_h = display_h + self.PREVIEW_PAD_Y
+        x = (screen_w - win_w) // 2
+        y = (screen_h - win_h) // 2
+        self.preview_window_obj.geometry(f"{win_w}x{win_h}+{x}+{y}")
+        
+        # 绑定 Resize 事件
+        self.preview_window_obj.bind("<Configure>", self.on_preview_resize)
+        
+        # 绑定关闭事件，清理状态
+        self.preview_window_obj.protocol("WM_DELETE_WINDOW", self.close_preview_window)
         
         # 主容器
         main_container = ctk.CTkFrame(self.preview_window_obj)
-        main_container.pack(padx=10, pady=10, fill="both", expand=True)
-
-        # 顶部导航栏
-        nav_frame = ctk.CTkFrame(main_container)
-        nav_frame.pack(side="top", fill="x", padx=5, pady=5)
+        main_container.pack(fill="both", expand=True, padx=10, pady=10)
         
-        ctk.CTkButton(nav_frame, text="上一页", width=80, command=self.prev_preview_page).pack(side="left", padx=10)
-        self.page_info_label = ctk.CTkLabel(nav_frame, text="第 1 页", font=ctk.CTkFont(weight="bold"))
+        # 顶部工具栏 (翻页和信息)
+        nav_frame = ctk.CTkFrame(main_container, fg_color="transparent")
+        nav_frame.pack(fill="x", pady=(0, 5))
+        
+        ctk.CTkButton(nav_frame, text="上一页", width=80, command=self.prev_preview_page).pack(side="left", padx=5)
+        self.page_info_label = ctk.CTkLabel(nav_frame, text="", font=ctk.CTkFont(weight="bold"))
         self.page_info_label.pack(side="left", expand=True)
-        ctk.CTkButton(nav_frame, text="下一页", width=80, command=self.next_preview_page).pack(side="right", padx=10)
-
-        # 使用 Canvas 绘制
-        self.preview_canvas = Canvas(main_container, width=display_w, height=display_h, highlightthickness=0, bg="gray")
-        self.preview_canvas.pack(padx=20, pady=20)
+        ctk.CTkButton(nav_frame, text="下一页", width=80, command=self.next_preview_page).pack(side="right", padx=5)
         
-        self.preview_image_id = self.preview_canvas.create_image(0, 0, anchor="nw", image=self.tk_img)
+        # 画布容器 (居中)
+        canvas_container = ctk.CTkFrame(main_container, fg_color="transparent")
+        canvas_container.pack(fill="both", expand=True)
         
-        # 初始化裁剪框
-        self.preview_rect_id = self.preview_canvas.create_rectangle(0, 0, 0, 0, outline="red", width=3, dash=(4, 4))
+        self.preview_canvas = Canvas(
+            canvas_container, 
+            highlightthickness=0, 
+            bg="#2b2b2b",
+            width=display_w + self.canvas_offset * 2,
+            height=display_h + self.canvas_offset * 2
+        )
+        self.preview_canvas.place(relx=0.5, rely=0.5, anchor="center")
         
-        # 绑定事件
-        self.preview_canvas.bind("<ButtonPress-1>", self.on_canvas_click)
+        # 渲染图片
+        self.preview_image_id = self.preview_canvas.create_image(
+            self.canvas_offset, self.canvas_offset, 
+            anchor="nw", 
+            image=self.tk_img
+        )
+        
+        # 创建阴影遮罩 (上, 下, 左, 右)
+        self.shade_ids = []
+        for _ in range(4):
+            sid = self.preview_canvas.create_rectangle(0, 0, 0, 0, fill="black", stipple="gray50", outline="")
+            self.shade_ids.append(sid)
+        
+        # 裁剪框 (红色虚线，加粗)
+        self.preview_rect_id = self.preview_canvas.create_rectangle(
+            0, 0, 0, 0, 
+            outline="red", 
+            width=3, 
+            dash=(4, 4)
+        )
+        
+        # 底部尺寸信息
+        self.size_info_label = ctk.CTkLabel(main_container, text="裁剪尺寸: 0 x 0", text_color="gray")
+        self.size_info_label.pack(side="bottom", pady=5)
+        
+        # 确保裁剪框在阴影之上
+        self.preview_canvas.tag_raise(self.preview_rect_id)
+        
+        # 事件绑定
+        self.preview_canvas.bind("<Button-1>", self.on_canvas_click)
         self.preview_canvas.bind("<B1-Motion>", self.on_canvas_drag)
         self.preview_canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
         self.preview_canvas.bind("<Motion>", self.on_canvas_hover)
-
+        
         self.update_page_label()
         self.update_preview_rect()
+        
+        # 强制更新一次布局，确保渲染完成
+        self.preview_window_obj.update_idletasks()
+        
+        # 二次确认同步：延迟一小段时间强制校准比例，解决部分系统下二次打开尺寸不准的问题
+        self.preview_window_obj.after(200, lambda: self.on_preview_resize(None, force=True))
 
-    def on_preview_resize(self, event):
+    def close_preview_window(self):
+        """关闭预览窗口并清理状态"""
+        if self.preview_window_obj:
+            self._last_resize_size = None
+            self.preview_window_obj.destroy()
+            self.preview_window_obj = None
+
+    def on_preview_resize(self, event, force=False):
         """处理预览窗口缩放事件"""
-        # 排除非窗口本身的配置事件（如子组件）
-        if event.widget != self.preview_window_obj:
+        if event and event.widget != self.preview_window_obj:
             return
             
-        # 增加时间间隔检测，防止由于 resize 触发 canvas 调整，
-        # canvas 调整又触发窗口 resize 导致的无限递归（闪烁根源）
         import time
         curr_time = time.time()
-        if hasattr(self, '_last_resize_time'):
-            if curr_time - self._last_resize_time < 0.2: # 200ms 内不重复处理
+        
+        if event:
+            new_w, new_h = event.width, event.height
+            # 增加保护：忽略窗口初始化时可能出现的极小尺寸事件
+            if new_w < 200 or new_h < 200:
                 return
-        self._last_resize_time = curr_time
-
-        # 简单的尺寸变化检测
-        new_w, new_h = event.width, event.height
-        if hasattr(self, '_last_resize_size'):
-            if abs(self._last_resize_size[0] - new_w) < 5 and abs(self._last_resize_size[1] - new_h) < 5:
+                
+            if hasattr(self, '_last_resize_size'):
+                if self._last_resize_size == (new_w, new_h):
+                    return
+            self._last_resize_size = (new_w, new_h)
+        else:
+            new_w = self.preview_window_obj.winfo_width()
+            new_h = self.preview_window_obj.winfo_height()
+            if new_w <= 200 or new_h <= 200: # 同样增加最小尺寸保护
                 return
-        self._last_resize_size = (new_w, new_h)
 
-        # 重新计算可用空间 (扣除导航栏和边距)
-        # 导航栏高度约为 50, 边距各 20
-        available_w = max(100, new_w - 60)
-        available_h = max(100, new_h - 100)
+        available_w = max(100, new_w - self.PREVIEW_PAD_X)
+        available_h = max(100, new_h - self.PREVIEW_PAD_Y)
         
         img_w, img_h = self.full_preview_img.size
-        new_scale = min(available_w/img_w, available_h/img_h, 1.0)
+        new_scale = min(available_w / img_w, available_h / img_h)
         
-        # 如果缩放比例变化显著，则重绘
-        if abs(new_scale - self.preview_scale) > 0.005:
+        if force or abs(new_scale - self.preview_scale) > 0.001:
             self.preview_scale = new_scale
-            display_w = int(img_w * self.preview_scale)
-            display_h = int(img_h * self.preview_scale)
+            display_w = int(round(img_w * self.preview_scale))
+            display_h = int(round(img_h * self.preview_scale))
             
-            # 重新调整图片大小
-            if self.preview_scale < 1.0:
-                pil_img_resized = self.full_preview_img.resize((display_w, display_h), Image.Resampling.LANCZOS)
-            else:
-                pil_img_resized = self.full_preview_img
-            
+            pil_img_resized = self.full_preview_img.resize((display_w, display_h), Image.Resampling.LANCZOS)
             self.tk_img = ImageTk.PhotoImage(pil_img_resized)
             
-            # 更新已有的 Canvas 和图片
-            self.preview_canvas.config(width=display_w, height=display_h)
+            self.preview_canvas.config(width=display_w + self.canvas_offset * 2, height=display_h + self.canvas_offset * 2)
             self.preview_canvas.itemconfig(self.preview_image_id, image=self.tk_img)
+            self.preview_canvas.coords(self.preview_image_id, self.canvas_offset, self.canvas_offset)
             self.update_preview_rect()
 
     def update_page_label(self):
@@ -457,34 +525,39 @@ class PDFToImageConverter(ctk.CTk):
             
         try:
             img_w, img_h = self.full_preview_img.size
-            l_val = int(self.crop_left.get() or 0)
-            t_val = int(self.crop_top.get() or 0)
-            r_val = int(self.crop_right.get() or 0)
-            b_val = int(self.crop_bottom.get() or 0)
+            # 使用 float 先转再转 int，防止字符串带小数点导致报错
+            l_val = int(float(self.crop_left.get() or 0))
+            t_val = int(float(self.crop_top.get() or 0))
+            r_val = int(float(self.crop_right.get() or 0))
+            b_val = int(float(self.crop_bottom.get() or 0))
             
-            l = l_val * self.preview_scale
-            t = t_val * self.preview_scale
-            r = (img_w - r_val) * self.preview_scale
-            b = (img_h - b_val) * self.preview_scale
+            l = int(round(l_val * self.preview_scale)) + self.canvas_offset
+            t = int(round(t_val * self.preview_scale)) + self.canvas_offset
+            r = int(round((img_w - r_val) * self.preview_scale)) + self.canvas_offset
+            b = int(round((img_h - b_val) * self.preview_scale)) + self.canvas_offset
             
             # 更新主裁剪框
             self.preview_canvas.coords(self.preview_rect_id, l, t, r, b)
             
             # 更新阴影遮罩 (上, 下, 左, 右)
-            canvas_w = img_w * self.preview_scale
-            canvas_h = img_h * self.preview_scale
-            self.preview_canvas.coords(self.shade_ids[0], 0, 0, canvas_w, t) # Top
-            self.preview_canvas.coords(self.shade_ids[1], 0, b, canvas_w, canvas_h) # Bottom
-            self.preview_canvas.coords(self.shade_ids[2], 0, t, l, b) # Left
-            self.preview_canvas.coords(self.shade_ids[3], r, t, canvas_w, b) # Right
+            canvas_w = int(round(img_w * self.preview_scale))
+            canvas_h = int(round(img_h * self.preview_scale))
+            off = self.canvas_offset
+            self.preview_canvas.coords(self.shade_ids[0], off, off, canvas_w + off, t) # Top
+            self.preview_canvas.coords(self.shade_ids[1], off, b, canvas_w + off, canvas_h + off) # Bottom
+            self.preview_canvas.coords(self.shade_ids[2], off, t, l, b) # Left
+            self.preview_canvas.coords(self.shade_ids[3], r, t, canvas_w + off, b) # Right
+            
+            # 确保裁剪框在阴影之上
+            self.preview_canvas.tag_raise(self.preview_rect_id)
             
             # 更新尺寸信息
             cw = max(0, img_w - l_val - r_val)
             ch = max(0, img_h - t_val - b_val)
             if hasattr(self, 'size_info_label'):
                 self.size_info_label.configure(text=f"裁剪尺寸: {cw} x {ch} 像素 (宽x高)")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Update rect error: {e}")
 
     def on_canvas_hover(self, event):
         if self.is_dragging: return
@@ -505,10 +578,11 @@ class PDFToImageConverter(ctk.CTk):
     def get_edge_at(self, x, y):
         try:
             img_w, img_h = self.full_preview_img.size
-            l = int(self.crop_left.get() or 0) * self.preview_scale
-            t = int(self.crop_top.get() or 0) * self.preview_scale
-            r = (img_w - int(self.crop_right.get() or 0)) * self.preview_scale
-            b = (img_h - int(self.crop_bottom.get() or 0)) * self.preview_scale
+            off = self.canvas_offset
+            l = int(round(int(self.crop_left.get() or 0) * self.preview_scale)) + off
+            t = int(round(int(self.crop_top.get() or 0) * self.preview_scale)) + off
+            r = int(round((img_w - int(self.crop_right.get() or 0)) * self.preview_scale)) + off
+            b = int(round((img_h - int(self.crop_bottom.get() or 0)) * self.preview_scale)) + off
             
             margin = 20
             # 优先检测角落
@@ -555,8 +629,8 @@ class PDFToImageConverter(ctk.CTk):
             curr_w = img_w - l - r
             curr_h = img_h - t - b
             
-            new_l = max(0, min(int(l + dx), img_w - curr_w))
-            new_t = max(0, min(int(t + dy), img_h - curr_h))
+            new_l = max(0, min(int(round(l + dx)), img_w - curr_w))
+            new_t = max(0, min(int(round(t + dy)), img_h - curr_h))
             
             self.crop_left.set(str(new_l))
             self.crop_right.set(str(img_w - new_l - curr_w))
@@ -567,25 +641,25 @@ class PDFToImageConverter(ctk.CTk):
         # 边缘与角落拖拽
         min_size = 10
         if "left" in self.drag_edge or "nw" in self.drag_edge or "sw" in self.drag_edge:
-            new_l = max(0, int(l + dx))
+            new_l = max(0, int(round(l + dx)))
             # 确保不越过右边界 (保留最小宽度)
             new_l = min(new_l, img_w - r - min_size)
             self.crop_left.set(str(new_l))
             
         if "right" in self.drag_edge or "ne" in self.drag_edge or "se" in self.drag_edge:
-            new_r = max(0, int(r - dx))
+            new_r = max(0, int(round(r - dx)))
             # 确保不越过左边界 (保留最小宽度)
             new_r = min(new_r, img_w - l - min_size)
             self.crop_right.set(str(new_r))
             
         if "top" in self.drag_edge or "nw" in self.drag_edge or "ne" in self.drag_edge:
-            new_t = max(0, int(t + dy))
+            new_t = max(0, int(round(t + dy)))
             # 确保不越过下边界 (保留最小高度)
             new_t = min(new_t, img_h - b - min_size)
             self.crop_top.set(str(new_t))
             
         if "bottom" in self.drag_edge or "sw" in self.drag_edge or "se" in self.drag_edge:
-            new_b = max(0, int(b - dy))
+            new_b = max(0, int(round(b - dy)))
             # 确保不越过上边界 (保留最小高度)
             new_b = min(new_b, img_h - t - min_size)
             self.crop_bottom.set(str(new_b))
