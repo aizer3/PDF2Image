@@ -65,7 +65,7 @@ class PDFToImageConverter(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("PDF 转图片工具 (v1.4 多进程版)")
+        self.title("PDF 转图片工具 (v1.5 多进程版)")
         self.geometry("700x580")
 
         # 设置窗口图标
@@ -335,6 +335,9 @@ class PDFToImageConverter(ctk.CTk):
         self.preview_window_obj.title("交互式裁剪预览 (拖拽边缘调整)")
         self.preview_window_obj.attributes("-topmost", True)
         
+        # 绑定窗口大小改变事件
+        self.preview_window_obj.bind("<Configure>", self.on_preview_resize)
+        
         # 主容器
         main_container = ctk.CTkFrame(self.preview_window_obj)
         main_container.pack(padx=10, pady=10, fill="both", expand=True)
@@ -365,6 +368,46 @@ class PDFToImageConverter(ctk.CTk):
 
         self.update_page_label()
         self.update_preview_rect()
+
+    def on_preview_resize(self, event):
+        """处理预览窗口缩放事件"""
+        # 排除非窗口本身的配置事件（如子组件）
+        if event.widget != self.preview_window_obj:
+            return
+            
+        # 简单的防抖处理：如果尺寸变化太小则忽略
+        new_w, new_h = event.width, event.height
+        if hasattr(self, '_last_resize_size'):
+            if abs(self._last_resize_size[0] - new_w) < 5 and abs(self._last_resize_size[1] - new_h) < 5:
+                return
+        self._last_resize_size = (new_w, new_h)
+
+        # 重新计算可用空间 (扣除导航栏和边距)
+        # 导航栏高度约为 50, 边距各 20
+        available_w = max(100, new_w - 60)
+        available_h = max(100, new_h - 100)
+        
+        img_w, img_h = self.full_preview_img.size
+        new_scale = min(available_w/img_w, available_h/img_h, 1.0)
+        
+        # 如果缩放比例变化显著，则重绘
+        if abs(new_scale - self.preview_scale) > 0.005:
+            self.preview_scale = new_scale
+            display_w = int(img_w * self.preview_scale)
+            display_h = int(img_h * self.preview_scale)
+            
+            # 重新调整图片大小
+            if self.preview_scale < 1.0:
+                pil_img_resized = self.full_preview_img.resize((display_w, display_h), Image.Resampling.LANCZOS)
+            else:
+                pil_img_resized = self.full_preview_img
+            
+            self.tk_img = ImageTk.PhotoImage(pil_img_resized)
+            
+            # 更新已有的 Canvas 和图片
+            self.preview_canvas.config(width=display_w, height=display_h)
+            self.preview_canvas.itemconfig(self.preview_image_id, image=self.tk_img)
+            self.update_preview_rect()
 
     def update_page_label(self):
         if hasattr(self, 'page_info_label') and self.page_info_label.winfo_exists():

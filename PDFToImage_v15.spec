@@ -32,7 +32,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='PDFToImage_v14',
+    name='PDFToImage_v15',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

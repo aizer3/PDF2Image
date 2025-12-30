@@ -56,7 +56,7 @@ cropped_img = img.crop((left, top, right, bottom))
 - 代码通过 `min/max` 逻辑确保裁剪区域始终有效，防止因输入数值过大导致程序崩溃。
 
 ### 2.4 多进程并行转换与停止机制
-为了彻底突破 Python GIL 的限制，v1.4 版本引入了多进程架构：
+为了彻底突破 Python GIL 的限制，v1.5 版本引入了多进程架构：
 ```python
 # 使用 ProcessPoolExecutor 调度多核 CPU
 max_workers = min(os.cpu_count() or 4, 8)

@@ -21,5 +21,5 @@
 ## 打包说明
 项目包含多个 `.spec` 文件，推荐使用最新版本：
 ```bash
-python -m PyInstaller PDFToImage_v14.spec
+python -m PyInstaller PDFToImage_v15.spec
 ```
