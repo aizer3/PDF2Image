@@ -65,7 +65,7 @@ class PDFToImageConverter(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("PDF 转图片工具 (v8 多进程版)")
+        self.title("PDF 转图片工具 (v1.4 多进程版)")
         self.geometry("700x580")
 
         # 设置窗口图标
