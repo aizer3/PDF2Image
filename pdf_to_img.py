@@ -65,7 +65,7 @@ class PDFToImageConverter(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("PDF 转图片工具 (v1.5 多进程版)")
+        self.title("PDF 转图片工具 (v1.5.1 稳定版)")
         self.geometry("700x580")
 
         # 设置窗口图标
@@ -335,8 +335,9 @@ class PDFToImageConverter(ctk.CTk):
         self.preview_window_obj.title("交互式裁剪预览 (拖拽边缘调整)")
         self.preview_window_obj.attributes("-topmost", True)
         
-        # 绑定窗口大小改变事件
-        self.preview_window_obj.bind("<Configure>", self.on_preview_resize)
+        # 先完成所有组件初始化，再绑定事件，防止初始化时的布局变化触发 resize
+        # 且使用 after 延迟绑定，彻底避开窗口创建初期的抖动
+        self.preview_window_obj.after(500, lambda: self.preview_window_obj.bind("<Configure>", self.on_preview_resize))
         
         # 主容器
         main_container = ctk.CTkFrame(self.preview_window_obj)
@@ -375,7 +376,16 @@ class PDFToImageConverter(ctk.CTk):
         if event.widget != self.preview_window_obj:
             return
             
-        # 简单的防抖处理：如果尺寸变化太小则忽略
+        # 增加时间间隔检测，防止由于 resize 触发 canvas 调整，
+        # canvas 调整又触发窗口 resize 导致的无限递归（闪烁根源）
+        import time
+        curr_time = time.time()
+        if hasattr(self, '_last_resize_time'):
+            if curr_time - self._last_resize_time < 0.2: # 200ms 内不重复处理
+                return
+        self._last_resize_time = curr_time
+
+        # 简单的尺寸变化检测
         new_w, new_h = event.width, event.height
         if hasattr(self, '_last_resize_size'):
             if abs(self._last_resize_size[0] - new_w) < 5 and abs(self._last_resize_size[1] - new_h) < 5:
