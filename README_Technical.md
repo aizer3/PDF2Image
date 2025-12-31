@@ -1,10 +1,10 @@
-# PDF2Image (Modern UI) 深度技术文档
+# PDF2Image (v1.5.11) 深度技术文档
 
 本项目是一个基于 Python 开发的现代化 PDF 转图片工具。本文档旨在深入解析项目的核心代码实现、架构设计及关键技术点，帮助开发者理解其内部工作原理。
 
 ## 1. 核心架构设计
 
-项目采用 **事件驱动 (Event-Driven)** 和 **多线程 (Multi-threading)** 架构。UI 线程负责响应用户操作和渲染界面，后台线程负责耗时的 PDF 解析与图像处理，确保在高负载任务下界面依然保持流畅。
+项目采用 **事件驱动 (Event-Driven)** 和 **多进程 (Multi-processing)** 架构。UI 线程基于 `customtkinter` 负责响应用户操作和渲染界面，后台通过 `ProcessPoolExecutor` 调度多核 CPU 进行耗时的 PDF 解析与图像处理。
 
 ## 2. 关键代码详解
 
@@ -68,7 +68,7 @@ future = executor.submit(process_page_task, pdf_path, i, zoom, crop_params, outp
 **解读**：
 - **性能飞跃**：转换速度提升了约 3-5 倍（取决于 CPU 核心数）。
 - **内存安全**：每个子进程在处理完单页后会自动释放内存，彻底解决了主进程内存累积的问题。
-- **稳定性**：子进程崩溃不会导致主程序挂掉。
+- **停止机制**：主进程通过标志位控制任务分发，并在停止时关闭执行器。
 
 ### 2.5 现代化交互：文件拖拽支持
 引入 `windnd` 库实现原生 Windows 文件拖拽：
@@ -76,10 +76,10 @@ future = executor.submit(process_page_task, pdf_path, i, zoom, crop_params, outp
 import windnd
 windnd.hook_dropfiles(self, self.on_file_drop)
 ```
-**解读**：用户只需将 PDF 拖入窗口即可自动填充路径，极大优化了操作链路。
+**解读**：用户只需将 PDF 拖入窗口即可自动填充路径。代码中特别处理了编码问题（UTF-8/GBK），确保中文路径不乱码。
 
-### 2.6 预览窗口的自适应缩放
-预览窗口通过计算缩放系数（Scale）来适配不同尺寸的屏幕。
+### 2.6 交互式裁剪预览
+预览窗口通过计算缩放系数（Scale）来适配不同尺寸的屏幕，并支持鼠标拖拽调整裁剪区域。
 ```python
 # 限制预览图大小，适应屏幕 80% 的尺寸
 screen_w = self.winfo_screenwidth() * 0.8
@@ -90,7 +90,9 @@ if scale < 1.0:
     new_size = (int(img_w * scale), int(img_h * scale))
     pil_img = pil_img.resize(new_size, Image.Resampling.LANCZOS)
 ```
-**解读**：使用 `LANCZOS` 重采样滤镜是为了在缩小图片时尽可能保留细节，方便用户确认裁剪范围。
+**解读**：
+- **实时同步**：预览窗口的拖拽操作会实时反馈到主界面的数值输入框中。
+- **视觉反馈**：使用阴影遮罩（Shade）突出显示保留区域。
 
 ## 3. 打包技术内幕 (`.spec` 配置)
 
